@@ -1,98 +1,43 @@
 import numpy as np
-import rasterio
 from osgeo import gdal
 
-image_path = r"D:\HKUST(GZ)\Research\Beautimeter\GZ-Downtown\krigin\v.tif"
-output_path = r"D:\HKUST(GZ)\Research\Beautimeter\GZ-Downtown\krigin\v_ht.tif"
+from functions import head_tail_breaks
 
-def head_tail_breaks(array, break_per=0.4):
-    i = 1
+image_path = "path/to/lr.tif"
+output_path = "path/to/lr_ht.tif"
 
-    rats, cuts = [], []
-    rat_in_head, head_mean, ht_index = 0, 0, 1
-    
-    base = np.zeros(np.shape(array)).astype(np.int8)
-    image = np.copy(array)
-    array = np.ravel(array)
-    idx = np.where(array == -1)
-    array = np.delete(array, idx)
-    
-    while (rat_in_head <= break_per) and (len(array) >1) and np.mean(array) > 0:
-        if i == 1:
-            break_per = 0.5
-            i+=1
-        else: 
-            break_per = 0.5
-        mean = np.mean(array)
-        # print(mean)
-        cuts.append(mean)
-        
-        head_mean = array[array > mean]
+# Open the dataset
+try:
+    with gdal.Open(image_path) as dataset:
+        if dataset is None:
+            raise IOError(f"Failed to open image file: {image_path}")
 
-        count_total = len(array)
-        count_head_mean = len(head_mean)
+        band = dataset.GetRasterBand(1)
+        data = band.ReadAsArray()
+        transform = dataset.GetGeoTransform()
+        nodata_value = band.GetNoDataValue()
 
-        rat = count_head_mean / count_total
-        rats.append(rat)
+        # Handle NoData values
+        if nodata_value is not None:
+            data[data == nodata_value] = -1
 
-        if rat_in_head == 0:
-            rat_in_head = rat
-        else:
-            rat_in_head = np.mean(rats)
+        # Apply head-tail breaks classification
+        ht_index, cuts = head_tail_breaks(data)
+        print("Ht-index:%s, Cuts:%s" % (ht_index, cuts))
 
-        if rat_in_head < break_per:
-            ht_index += 1
-        array = head_mean
+        htimg = np.full(data.shape, -1, dtype=int)
+        for i, threshold in enumerate(cuts):
+            htimg[data > threshold] = i + 1
 
-    cn_list = cuts[0:-1]
-    print(cn_list)
-    del array
-    
-    for i, m in enumerate(cn_list):
-        
-        if i==len(cn_list)-1:
-            condition = (image >= m)
+        # Save the result as a new GeoTIFF file
+        rows, cols = htimg.shape
+        with gdal.GetDriverByName("GTiff").Create(
+            output_path, cols, rows, 1, gdal.GDT_Int32
+        ) as output_dataset:
+            output_dataset.GetRasterBand(1).WriteArray(htimg)
+            output_dataset.SetGeoTransform(transform)
+            output_dataset.SetProjection(dataset.GetProjection())
+            print(f"TIFF file saved to {output_path}")
 
-        else:
-            condition = (image >= m) & (image < cn_list[i+1])
-        himg = np.where(condition, i+1, 0)
-        
-        base[himg!=0]=0
-        base = base + himg
-    
-    return ht_index, base
-
-
-# 使用gdal读取文件
-dataset = gdal.Open(image_path)
-band = dataset.GetRasterBand(1)
-data = band.ReadAsArray()
-transform = dataset.GetGeoTransform()
-nodata_value = band.GetNoDataValue()
-
-data[data == nodata_value] = -1
-
-ht, htimg = head_tail_breaks(data)
-
-htimg += 1
-htimg[data == -1] = -1
-
-# 获取数组的行数和列数
-rows, cols = htimg.shape
-
-# 创建TIFF文件
-driver = gdal.GetDriverByName("GTiff")
-output_dataset = driver.Create(output_path, cols, rows, 1, gdal.GDT_Int32)
-
-# 将数组写入TIFF文件
-output_dataset.GetRasterBand(1).WriteArray(htimg)
-
-# 设置输出文件的坐标系统和变换
-output_dataset.SetGeoTransform(transform)
-output_dataset.SetProjection(dataset.GetProjection())
-
-# 关闭文件
-output_dataset = None
-dataset = None
-
-print(f"TIFF文件已保存到 {output_path}")
+except Exception as e:
+    print(f"An error occurred: {e}")
