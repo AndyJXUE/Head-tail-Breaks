@@ -46,7 +46,6 @@ def head_tail_breaks(array, break_per=0.42):
         r = -1
     return ht_index, cn_list, r
 
-
 with rasterio.open(image_path) as src:
 
     data = src.read()[0,:,:].astype(np.int32)
